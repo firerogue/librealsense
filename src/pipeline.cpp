@@ -574,6 +574,12 @@ namespace librealsense
             throw librealsense::wrong_api_call_sequence_exception("wait_for_frames cannot be called before start()");
         }
 
+        auto playback = As<librealsense::playback_device>(_active_profile->get_device());
+        if (playback && playback->get_current_status() == RS2_PLAYBACK_STATUS_PAUSED)
+        {
+            playback->resume();
+        }
+
         frame_holder f;
         if (_pipeline_process->dequeue(&f, timeout_ms))
         {
@@ -610,6 +616,12 @@ namespace librealsense
         if (!_active_profile)
         {
             throw librealsense::wrong_api_call_sequence_exception("poll_for_frames cannot be called before start()");
+        }
+
+        auto playback = As<librealsense::playback_device>(_active_profile->get_device());
+        if (playback && playback->get_current_status() == RS2_PLAYBACK_STATUS_PAUSED)
+        {
+            playback->resume();
         }
 
         if (_pipeline_process->try_dequeue(frame))

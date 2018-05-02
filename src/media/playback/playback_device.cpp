@@ -536,6 +536,12 @@ void playback_device::try_looping()
                 LOG_WARNING("Bad frame from reader, ignoring");
                  return true;
             }
+
+//            if (!is_real_time()) pause(); // This deadlocks. Need to manually pause, not use function.
+            if (!is_real_time()) {
+                LOG_DEBUG("Pausing playback device for non-realtime");
+                m_is_paused = true;
+            }
             //Dispatch frame to the relevant sensor
             m_sensors.at(frame->stream_id.sensor_index)->handle_frame(std::move(frame->frame), m_real_time);
             return true;
