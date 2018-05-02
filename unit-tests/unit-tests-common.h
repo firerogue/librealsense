@@ -34,6 +34,8 @@
 #define NOEXCEPT_FALSE noexcept(false)
 #endif
 
+#define SECTION_FROM_TEST_NAME space_to_underscore(Catch::getCurrentContext().getResultCapture()->getCurrentTestName()).c_str()
+
 inline std::string space_to_underscore(const std::string& text) {
     const std::string from = " ";
     const std::string to = "__";

@@ -16,8 +16,6 @@
 
 using namespace rs2;
 
-# define SECTION_FROM_TEST_NAME space_to_underscore(Catch::getCurrentContext().getResultCapture()->getCurrentTestName()).c_str()
-
 long long current_time()
 {
     return (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() % 10000);
@@ -4198,6 +4196,110 @@ TEST_CASE("Pipeline record and playback", "[live]") {
     }
 }
 
+TEST_CASE("Playback device realtime option", "[live]")
+{
+    rs2::context ctx;
+    const double delta = 0.1;
+
+    std::mutex m;
+    std::condition_variable cv;
+
+    if (make_context(SECTION_FROM_TEST_NAME, &ctx))
+    {
+        const std::string filename = get_folder_path(special_folder::temp_folder) + "test_file2.bag";
+        // Scoping the below code to make sure no one holds the device
+        {
+            rs2::pipeline p(ctx);
+            rs2::config cfg;
+            REQUIRE_NOTHROW(cfg.enable_record_to_file(filename));
+            rs2::pipeline_profile profile;
+            REQUIRE_NOTHROW(profile = cfg.resolve(p));
+            REQUIRE(profile);
+            auto dev = profile.get_device();
+            REQUIRE(dev);
+            disable_sensitive_options_for(dev);
+            REQUIRE_NOTHROW(p.start(cfg));
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            rs2::frameset frames;
+            REQUIRE_NOTHROW(frames = p.wait_for_frames(200));
+            REQUIRE(frames);
+            REQUIRE(frames.size() > 0);
+            REQUIRE_NOTHROW(p.stop());
+        }
+        // Scoping the above code to make sure no one holds the device
+
+        rs2::pipeline p(ctx);
+        rs2::config cfg;
+        rs2::pipeline_profile profile;
+        REQUIRE_NOTHROW(cfg.enable_device_from_file(filename, false));
+        REQUIRE_NOTHROW(profile = cfg.resolve(p));
+        REQUIRE(profile);
+
+        std::chrono::high_resolution_clock::time_point start, end;
+        unsigned int rt_count = 0, slow_count = 0, fast_count = 0;
+        const auto fps = profile.get_stream(RS2_STREAM_DEPTH).fps();
+        const std::chrono::milliseconds sleep_timeout{ (1000 / fps) * 2 }; // make slow non-rt twice as slow as true framerate
+
+        auto playback = profile.get_device().as<rs2::playback>();
+        playback.set_status_changed_callback([&](rs2_playback_status status) {
+            if (status == RS2_PLAYBACK_STATUS_STOPPED) {
+                {
+                    std::lock_guard<std::mutex> locker(m);
+                    end = std::chrono::high_resolution_clock::now();
+                }
+                cv.notify_one();
+            }
+        });
+
+        // Real-time test
+        playback.set_real_time(true);
+        start = std::chrono::high_resolution_clock::now();
+        REQUIRE_NOTHROW(p.start(cfg));
+        while (auto frames = p.wait_for_frames(500))
+        {
+            if (frames.get_depth_frame()) rt_count++;
+        }
+        {
+            std::unique_lock<std::mutex> locker(m);
+            REQUIRE(cv.wait_for(locker, std::chrono::seconds(10)) == std::cv_status::no_timeout);
+            // measured fps should be within a given delta of expected fps
+            // std::chrono::duration<double>(end - start).count() is the number of seconds elapsed represented as a double.
+            REQUIRE(std::abs(rt_count / std::chrono::duration<double>(end - start).count() - fps) < delta);
+        }
+
+        // fast non-real-time test
+        playback.set_real_time(false);
+        start = std::chrono::high_resolution_clock::now();
+        REQUIRE_NOTHROW(p.start(cfg));
+        while (auto frames = p.wait_for_frames())
+        {
+            if (frames.get_depth_frame()) fast_count++;
+        }
+        {
+            std::unique_lock<std::mutex> locker(m);
+            REQUIRE(cv.wait_for(locker, std::chrono::seconds(10)) == std::cv_status::no_timeout);
+            // Real-time may drop, non-rt should never drop. Therefore, non-rt count should be >= rt count
+            REQUIRE(fast_count >= rt_count);
+        }
+
+        // slow non-real-time test
+        playback.set_real_time(false);
+        start = std::chrono::high_resolution_clock::now();
+        REQUIRE_NOTHROW(p.start(cfg));
+        while (auto frames = p.wait_for_frames())
+        {
+            if (frames.get_depth_frame()) slow_count++;
+            // artificially slow down callback to half the expected framerate
+            std::this_thread::sleep_for(sleep_timeout);
+        }
+        {
+            std::unique_lock<std::mutex> locker(m);
+            REQUIRE(cv.wait_for(locker, std::chrono::seconds(10)) == std::cv_status::no_timeout);
+            // non-rt mode should never drop frames, so count should be the same regardless of callback speed
+            REQUIRE(slow_count == fast_count);
+        }
+    }
+}
 
 TEST_CASE("Syncer sanity with software-device device", "[live][software-device]") {
     rs2::context ctx;

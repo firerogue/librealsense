@@ -14,9 +14,6 @@
 #include <ctime>
 #include <algorithm>
 
-
-# define SECTION_FROM_TEST_NAME space_to_underscore(Catch::getCurrentContext().getResultCapture()->getCurrentTestName()).c_str()
-
 class post_processing_filters
 {
 public:

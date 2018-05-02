@@ -42,7 +42,7 @@ install(
 if (WIN32)
     set(Deployment_Location "$ENV{TEMP}\\")
 else() # Data shall be preserved between reboots. For Linux distributions/ ANDROID_NDK_TOOLCHAIN_INCLUDED/APPLE
-    #set(Deployment_Location /var/tmp/) The standard confoiguration currently fails on CI
+    #set(Deployment_Location /var/tmp/) The standard configuration currently fails on CI
 	set(Deployment_Location /tmp/)
 endif()
 
