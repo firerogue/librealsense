@@ -5,16 +5,7 @@
 #include <map>
 #include <mex.h>
 #include <matrix.h>
-
-typedef void mxFunc(int, mxArray*[], int, const mxArray*[]);
-
-struct func_data {
-    std::function<mxFunc> f;
-    int out, in_min, in_max;
-    func_data() : f(), out(0), in_min(0), in_max(0) {};
-    func_data(std::function<mxFunc> function, int out_args, int in_args) : func_data(function, out_args, in_args, in_args) {}
-    func_data(std::function<mxFunc> function, int out_args, int in_min_args, int in_max_args) : f(function), out(out_args), in_min(in_min_args), in_max(in_max_args) {}
-};
+#include "autoargs.h"
 
 class ClassFactory
 {
@@ -23,13 +14,20 @@ private:
     std::map<std::string, func_data> funcs;
 public:
     ClassFactory(std::string n) : name(n), funcs() {}
-    void record(std::string fname, int out, int in, std::function<mxFunc> func)
+
+    template <typename Func>
+    void record(std::string fname, size_t in, Func&& func)
     {
-        funcs.emplace(fname, func_data(func, out, in));
+        record(fname, in, in, std::move(func));
     }
-    void record(std::string fname, int out, int in_min, int in_max, std::function<mxFunc> func)
+    template <typename Func>
+    void record(std::string fname, size_t in_min, size_t in_max, Func&& func)
     {
-        funcs.emplace(fname, func_data(func, out, in_min, in_max));
+        funcs.emplace(fname, func_data(in_min, in_max, func));
+    }
+    void record(std::string fname, size_t out, size_t min_in, size_t max_in, std::function<mxFunc> func)
+    {
+        funcs.emplace(fname, func_data(out, min_in, max_in, func));
     }
 
     std::string get_name() { return name; }

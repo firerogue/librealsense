@@ -7,14 +7,13 @@
 #include <array>
 #include <type_traits>
 
-namespace std
-{
-template <bool B> using bool_constant = integral_constant<bool, B>;
-}
+template <bool B> using bool_constant = std::integral_constant<bool, B>;
 
 template <typename T> using is_basic_type = std::bool_constant<std::is_arithmetic<T>::value || std::is_pointer<T>::value || std::is_enum<T>::value>;
 template <typename T> struct is_array_type : std::false_type {};
 template <typename T> struct is_array_type<std::vector<T>> : std::true_type { using inner_t = T; };
+
+struct void_type {};
 
 // TODO: consider using nested impl/detail namespace
 namespace MatlabParamParser
@@ -169,6 +168,8 @@ namespace MatlabParamParser
     template <typename T> static typename std::enable_if<!is_basic_type<T>::value && traits_trampoline::use_cells<T>::value, mxArray*>::type wrap_array(const T* var, size_t length);
     template <typename T> static typename std::enable_if<is_basic_type<T>::value, mxArray*>::type wrap_array(const T* var, size_t length);
 };
+
+template <> mxArray* MatlabParamParser::wrap<void_type>(void_type&& var) { return nullptr; }
 
 #include "rs2_type_traits.h"
 

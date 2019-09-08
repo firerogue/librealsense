@@ -11,8 +11,8 @@ set(DEPENDENCIES realsense2 ${Matlab_MAT_LIBRARY})
 # A similar report exist dated in 2011 https://cmake.org/pipermail/cmake/2011-April/043808.html
 SET( CMAKE_SHARED_LINKER_FLAGS ${CMAKE_SHARED_LINKER_FLAGS} " /NODEFAULTLIB:realsense2" )
 
-set(MATLAB_CPP librealsense_mex.cpp Factory.cpp)
-set(MATLAB_H Factory.h MatlabParamParser.h rs2_type_traits.h types.h)
+set(MATLAB_CPP librealsense_mex.cpp)
+set(MATLAB_H autoargs.h Factory.h MatlabParamParser.h rs2_type_traits.h types.h)
 set(MATLAB_M align.m camera_info.m colorizer.m config.m context.m
              decimation_filter.m depth_frame.m depth_sensor.m
              depth_stereo_sensor.m device.m device_hub.m disparity_frame.m
