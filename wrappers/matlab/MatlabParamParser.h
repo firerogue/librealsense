@@ -12,113 +12,147 @@ template <bool B> using bool_constant = std::integral_constant<bool, B>;
 template <typename T> using is_basic_type = std::bool_constant<std::is_arithmetic<T>::value || std::is_pointer<T>::value || std::is_enum<T>::value>;
 template <typename T> struct is_array_type : std::false_type {};
 template <typename T> struct is_array_type<std::vector<T>> : std::true_type { using inner_t = T; };
-
 struct void_type {};
+
+// make this more complex to be able to handle inheritance?
+//      -> initializing class should add base classes to some sort of graph that indicates valid
+//         conversions.
+template <class T>
+bool can_convert(std::type_info& info) {
+    return info.hash_code() == typeid(T).hash_code();
+}
+
+template <class T> using is_trivial_t = bool_constant<std::is_same<T, bool>::value
+    || std::is_same<T, int8_t>::value || std::is_same<T, uint8_t>::value
+    || std::is_same<T, int16_t>::value || std::is_same<T, uint16_t>::value
+    || std::is_same<T, int32_t>::value || std::is_same<T, uint32_t>::value
+    || std::is_same<T, int64_t>::value || std::is_same<T, uint64_t>::value
+    || std::is_enum<T>::value>;
+template <class T, typename voider = void> struct to_value_t : std::conditional<is_trivial_t<T>, T, void*> {};
+template <class T> struct to_value_t<T, std::enable_if<std::is_enum<T>::value>::type> : std::underlying_type<T> {};
+
+template <class T, typename voider = void> struct to_mx_class : std::integral_constant<mxClassID, mxUINT64_CLASS> {};
+template <> struct to_mx_class<bool> : std::integral_constant<mxClassID, mxLOGICAL_CLASS> {};
+template <> struct to_mx_class<int8_t> : std::integral_constant<mxClassID, mxINT8_CLASS> {};
+template <> struct to_mx_class<uint8_t> : std::integral_constant<mxClassID, mxUINT8_CLASS> {};
+template <> struct to_mx_class<int16_t> : std::integral_constant<mxClassID, mxINT16_CLASS> {};
+template <> struct to_mx_class<uint16_t> : std::integral_constant<mxClassID, mxUINT16_CLASS> {};
+template <> struct to_mx_class<int32_t> : std::integral_constant<mxClassID, mxINT32_CLASS> {};
+template <> struct to_mx_class<uint32_t> : std::integral_constant<mxClassID, mxUINT32_CLASS> {};
+template <> struct to_mx_class<int64_t> : std::integral_constant<mxClassID, mxINT64_CLASS> {};
+template <class T> struct to_mx_class<T, std::enable_if<std::is_enum<T>::value>::type> : to_mx_class<std::underlying_type<T>> {};
+//template <> struct to_mx_class<uint64_t> : std::integral_constant<mxClassID, mxUINT64_CLASS> {};
+
+class arg_t {
+protected:
+    std::type_info* tinfo; // TODO: make sure you can arg_t = arg_t despite this.
+    union value_t {
+        value_t() : ptr(nullptr) {}
+        bool b; value_t(bool b) : b(b) {}
+        int8_t i8; value_t(int8_t i8) : i8(i8) {}
+        uint8_t ui8; value_t(uint8_t ui8) : ui8(ui8) {}
+        int16_t i16; value_t(int16_t i16) : i16(i16) {}
+        uint16_t ui16; value_t(uint16_t ui16) : ui16(ui16) {}
+        int32_t i32; value_t(int32_t i32) : i32(i32) {}
+        uint32_t ui32; value_t(uint32_t ui32) : ui32(ui32) {}
+        int64_t i64; value_t(int64_t i64) : i64(i64) {}
+        uint64_t ui64; value_t(uint64_t ui64) : ui64(ui64) {}
+        void* ptr; value_t(void* ptr) : ptr(ptr) {}
+    } holder;
+    std::function<void(void*)> destroyer;
+
+    template <class T>
+    typename std::enable_if<is_trivial_t<T>::value, to_value_t<T>::type>::type to_holder(T& value) { return value; }
+    template <class T>
+    typename std::enable_if<!is_trivial_t<T>::value, void*>::type to_holder(T& value) { return static_cast<void*>(trampoline_t::to_internal<T>(T)); }
+    template <class T>
+    typename std::enable_if<is_trivial_t<T>::value, to_value_t<T>::type>::type to_holder(T&& value) { return std::move(value); }
+    template <class T>
+    typename std::enable_if<!is_trivial_t<T>::value, void*>::type to_holder(T&& value) { return static_cast<void*>(trampoline_t::to_internal<T>(std::move(T))); }
+    template <class T>
+    typename std::enable_if<is_trivial_t<T>::value>::type destroy(void*) {}
+    template <class T>
+    typename std::enable_if<!is_trivial_t<T>::value>::type destroy(void* ptr) { 
+        using internal_t = typename MatlabParamParser::type_traits<T>::rs2_internal_t;
+        trampoline_t::destroy<T>(static_cast<internal_t*>(ptr));
+    }
+
+
+    using trampoline_t = typename MatlabParamParser::traits_trampoline;
+    
+    //arg_t(std::string& value) { static_assert(false, "Figure out strings!"); }
+public:
+    arg_t() : tinfo(const_cast<std::type_info*>(&typeid(nullptr_t))), holder(), destroyer([](void*) {}) {}
+    template <class T>
+    arg_t(T& value) : tinfo(const_cast<std::type_info*>(&typeid(T))), holder(to_holder(value)), destroyer(&destroy<T>) {}
+    template <class T>
+    arg_t(T&& value) : tinfo(const_cast<std::type_info*>(&typeid(T))), holder(to_holder(std::move(value))), destroyer(&destroy<T>) {}
+
+    // TODO: Figure out strings
+    //template <> static arg_t make_arg<std::string>(std::string& value) { return arg_t(value); }
+    //template <> static arg_t make_arg<char*>(char*& value) { return arg_t(value); }
+    //template <> static arg_t make_arg<const char*>(const char*& value) { return arg_t(value); }
+
+    template <class T>
+    bool can_convert() {
+        return can_convert<T>(*tinfo);
+    }
+
+    template <typename T, typename voider = typename std::enable_if<is_trivial_t<T>::value>::type>
+    explicit operator T() {
+        if (!can_convert<T>(*tinfo)) {
+            std::stringstream ss;
+            ss << "Failed to get " << typeid(T).name() << "argument from arg at " << this
+                << ". Actual type is " << tinfo->name();
+            mexErrMsgTxt(ss.str().c_str());
+        }
+        // casting pointer to union to a pointer of one of the internal types
+        // results in a pointer to that member. We can use this to generically
+        // grab the right type.
+        return *reinterpret_cast<to_value_t<T>*>(&holder); 
+    }
+    template <typename T, typename voider = typename std::enable_if<!is_trivial_t<T>::value>::type>
+    explicit operator T() {
+        using internal_t = typename MatlabParamParser::type_traits<T>::rs2_internal_t;
+
+        if (!holder.ptr) throw std::runtime_error("Arg empty"); // TODO: More useful error message
+
+        if (!can_convert<T>(*tinfo)) {
+            std::stringstream ss;
+            ss << "Failed to get " << typeid(T).name() << "argument from arg at " << this
+                << ". Actual type is " << tinfo->name();
+            mexErrMsgTxt(ss.str().c_str());
+        }
+
+        return trampoline_t::from_internal<T>(static_cast<internal_t*>(holder.ptr));
+    }
+
+    template <class T>
+    void destroy() {
+        if (!can_convert<T>(*tinfo)) {
+            std::stringstream ss;
+            ss << "Can't destroy arg of type " << typeid(T).name() << " at " << this
+                << ". Actual type is " << tinfo->name();
+            mexErrMsgTxt(ss.str().c_str());
+        }
+        deleter(holder);
+    }
+};
 
 // TODO: consider using nested impl/detail namespace
 namespace MatlabParamParser
 {
-    // in charge of which overloads to use
-    
-    // helper information for overloaded functions
-    template <typename T, typename voider = void> struct mx_wrapper_fns
-    {
-        static T parse(const mxArray* cell);
-        static mxArray* wrap(T&& var);
-        static void destroy(const mxArray* cell);
-    };
-    template <typename T, typename = void> struct mx_wrapper;
-    // enums are exposed as 64bit integers, using the underlying type to determine signedness
-    template <typename T> struct mx_wrapper<T, typename std::enable_if<std::is_enum<T>::value>::type>
-    {
-    private:
-        using signed_t = std::integral_constant<mxClassID, mxINT64_CLASS>;
-        using unsigned_t = std::integral_constant<mxClassID, mxUINT64_CLASS>;
-        using value_t = typename std::conditional<bool(std::is_signed<typename std::underlying_type<T>::type>::value), signed_t, unsigned_t>::type;
-    public:
-//        static const mxClassID value = /*value_t::value*/ signed_t::value;
-        using value = signed_t;
-        using type = typename std::conditional<std::is_same<value_t, signed_t>::value, int64_t, uint64_t>::type;
-    };
-    // pointers are cast to uint64_t because matlab doesn't have a concept of pointers
-    template <typename T> struct mx_wrapper<T, typename std::enable_if<std::is_pointer<T>::value>::type>
-    {
- //       static const mxClassID value = mxUINT64_CLASS;
-        using value = std::integral_constant<mxClassID, mxUINT64_CLASS>;
-        using type = uint64_t;
-    };
-    // bools are exposed as matlab's native logical type
-    template <> struct mx_wrapper<bool, void>
-    {
-//        static const mxClassID value = mxLOGICAL_CLASS;
-        using value = std::integral_constant<mxClassID, mxLOGICAL_CLASS>;
-        using type = mxLogical;
-    };
-    // floating points are exposed as matlab's native double type
-    template <typename T> struct mx_wrapper<T, typename std::enable_if<std::is_floating_point<T>::value>::type>
-    {
-//        static const mxClassID value = mxDOUBLE_CLASS;
-        using value = std::integral_constant<mxClassID, mxDOUBLE_CLASS>;
-        using type = double;
-    };
-    // integral types are exposed like enums
-    template <typename T> struct mx_wrapper<T, typename std::enable_if<std::is_integral<T>::value>::type>
-    {
-    private:
-        using signed_t = std::integral_constant<mxClassID, mxINT64_CLASS>;
-        using unsigned_t = std::integral_constant<mxClassID, mxUINT64_CLASS>;
-        using value_t = typename std::conditional<std::is_signed<T>::value, signed_t, unsigned_t>::type;
-    public:
-//        static const mxClassID value = value_t::value;
-        using value = value_t;
-        using type = typename std::conditional<std::is_same<value_t, signed_t>::value, int64_t, uint64_t>::type;
-    };
-    // uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, and int64_t
-    // are exposed as the relevant native Matlab type
-    template <> struct mx_wrapper<uint8_t> {
-        using value = std::integral_constant<mxClassID, mxUINT8_CLASS>;
-        using type = uint8_t;
-    };
-    template <> struct mx_wrapper<uint16_t> {
-        using value = std::integral_constant<mxClassID, mxUINT16_CLASS>;
-        using type = uint16_t;
-    };
-    template <> struct mx_wrapper<uint32_t> {
-        using value = std::integral_constant<mxClassID, mxUINT32_CLASS>;
-        using type = uint32_t;
-    };
-    template <> struct mx_wrapper<uint64_t> {
-        using value = std::integral_constant<mxClassID, mxUINT64_CLASS>;
-        using type = uint64_t;
-    };
-    template <> struct mx_wrapper<int8_t> {
-        using value = std::integral_constant<mxClassID, mxINT8_CLASS>;
-        using type = int8_t;
-    };
-    template <> struct mx_wrapper<int16_t> {
-        using value = std::integral_constant<mxClassID, mxINT16_CLASS>;
-        using type = int16_t;
-    };
-    template <> struct mx_wrapper<int32_t> {
-        using value = std::integral_constant<mxClassID, mxINT32_CLASS>;
-        using type = int32_t;
-    };
-    template <> struct mx_wrapper<int64_t> {
-        using value = std::integral_constant<mxClassID, mxINT64_CLASS>;
-        using type = int64_t;
-    };
-    // by default non-basic types are wrapped as pointers
-    template <typename T> struct mx_wrapper<T, typename std::enable_if<!is_basic_type<T>::value>::type> : mx_wrapper<void*> {};
     template <typename T, typename = void> struct type_traits {
         // KEEP THESE COMMENTED. They are only here to show the signature
         // should you choose to declare these functions
         // static rs2_internal_t* to_internal(T&& val);
         // static T from_internal(rs2_internal_t* ptr);
+        // static void destroy(rs2_internal_t* ptr);
     };
     struct traits_trampoline {
     private:
         template <typename T> struct detector {
-            struct fallback { int to_internal, from_internal, use_cells; };
+            struct fallback { int to_internal, from_internal, use_cells, use_destroy; };
             struct derived : type_traits<T>, fallback {};
             template <typename U, U> struct checker;
             typedef char ao1[1];
@@ -129,14 +163,13 @@ namespace MatlabParamParser
             template <typename U> static ao2& check_from(...);
             template <typename U> static ao1& check_cells(checker<int fallback::*, &U::use_cells> *);
             template <typename U> static ao2& check_cells(...);
-//            template <typename, typename = void> struct use_cells_t : false_type {};
-//            template <typename U> struct use_cells_t<U, typename std::enable_if<sizeof(check_cells<U>(0)) == 2>::type>
-//                : T::use_cells {};
+            template <typename U> static ao1& check_destroy(checker<int fallback::*, &U::use_destroy> *);
+            template <typename U> static ao2& check_destroy(...);
             
             enum { has_to = sizeof(check_to<derived>(0)) == 2 };
             enum { has_from = sizeof(check_from<derived>(0)) == 2 };
-//            enum { use_cells = use_cells_t<derived>::value };
             enum { use_cells = sizeof(check_cells<derived>(0)) == 2 };
+            enum { has_destroy = sizeof(check_destroy<derived>(0)) == 2 };
         };
         template <typename T> using internal_t = typename type_traits<T>::rs2_internal_t;
     public:
@@ -153,13 +186,45 @@ namespace MatlabParamParser
         // selected if it doesnt
         template <typename T> static typename std::enable_if<!detector<T>::has_from, T>::type
             from_internal(internal_t<T>* ptr) { return T(*ptr); }
+
         template <typename T> using use_cells = std::integral_constant<bool, detector<T>::use_cells>;
+
+        // selected if type_traits<T>::destroy exists
+        template <typename T> static typename std::enable_if<detector<T>::has_destroy, T>::type
+            destroy(internal_t<T>* ptr) { return type_traits<T>::destroy(ptr); }
+        // selected if it doesnt
+        template <typename T> static typename std::enable_if<!detector<T>::has_destroy, T>::type
+            destroy(internal_t<T>* ptr) { delete ptr; mexUnlock(); }
     };
 
     // TODO: try/catch->err msg?
-    template <typename T> static T parse(const mxArray* cell) { return mx_wrapper_fns<T>::parse(cell); }
-    template <typename T> static mxArray* wrap(T&& var) { return mx_wrapper_fns<T>::wrap(std::move(var)); };
-    template <typename T> static void destroy(const mxArray* cell) { return mx_wrapper_fns<T>::destroy(cell); }
+    template <typename T> static T parse(const mxArray* cell) {
+        make_caster<T> caster;
+        if (!caster.load(cell))
+            /* mexErrMsgTxt("Useful error message") */;
+        return T(caster);
+    }
+
+    // for trivial types that get sent in "cleartext"
+    template <typename T> static typename std::enable_if<is_trivial_t<T>::value, mxArray*>::type wrap(T&& var) {
+        mxArray* cell = mxCreateNumericArray(1, 1, to_mx_class<T>::value, mxREAL);
+        auto* outp = static_cast<to_value_t<T>::type*>(mxGetData(cell));
+        *outp = var;
+        return cell;
+    }
+    // For non-trivial types that get wrapped in arg_t
+    template <typename T> static typename std::enable_if<!is_trivial_t<T>::value, mxArray*>::type wrap(T&& var) { 
+        mxArray* cell = mxCreateNumericMatrix(1, 1, mxUINT64_CLASS, mxREAL);
+        auto* outp = static_cast<uint64_t*>(mxGetData(cell));
+        *outp = reinterpret_cast<uint64_t*>(new arg_t(std::move(var)));
+        return cell;
+    };
+    template <typename T> static void destroy(const mxArray* cell) { 
+        make_caster<T> caster;
+        if (!caster.load(cell))
+            /* mexErrMsgTxt("Useful error message") */;
+        return caster.destroy();
+    }
 
     template <typename T> static typename std::enable_if<!is_basic_type<T>::value, std::vector<T>>::type parse_array(const mxArray* cells);
     template <typename T> static typename std::enable_if<is_basic_type<T>::value, std::vector<T>>::type parse_array(const mxArray* cells);
@@ -172,67 +237,6 @@ namespace MatlabParamParser
 template <> mxArray* MatlabParamParser::wrap<void_type>(void_type&& var) { return nullptr; }
 
 #include "rs2_type_traits.h"
-
-// for basic types (aka arithmetic, pointer, and enum types)
-template <typename T> struct MatlabParamParser::mx_wrapper_fns<T, typename std::enable_if<is_basic_type<T>::value && !extra_checks<T>::value && !is_array_type<T>::value>::type>
-{
-    // Use full width types when converting integers.
-    // Always using full width makes some things easier, and doing it this way
-    // still allows us to use the mx_wrapper<T> class to send more exact types
-    // for frame data arrays
-    using type = typename std::conditional<std::is_integral<T>::value, typename std::conditional<std::is_signed<T>::value, int64_t, uint64_t>::type, T>::type;
-    using wrapper = mx_wrapper<type>;
-    static T parse(const mxArray* cell)
-    {
-        // obtain pointer to data, cast to proper matlab type
-        auto *p = static_cast<typename wrapper::type*>(mxGetData(cell));
-        // dereference pointer and cast to correct C++ type
-        return T(*p);
-    }
-    static mxArray* wrap(T&& var)
-    {
-        // request 1x1 matlab matrix of correct type
-        mxArray* cell = mxCreateNumericMatrix(1, 1, wrapper::value::value, mxREAL);
-        // access matrix's data as pointer to correct C++ type
-        auto *outp = static_cast<typename wrapper::type*>(mxGetData(cell));
-        // cast object to correct C++ type and then store it in the matrix
-        *outp = typename wrapper::type(var);
-        return cell;
-    }
-    static void destroy(const mxArray* cell)
-    {
-        static_assert(!is_basic_type<T>::value, "Trying to destroy basic type. This shouldn't happen.");
-        static_assert(is_basic_type<T>::value, "Non-basic type ended up in basic type's destroy function. How?");
-    }
-};
-
-// default for non-basic types (eg classes)
-template<typename T> struct MatlabParamParser::mx_wrapper_fns<T, typename std::enable_if<!is_basic_type<T>::value && !extra_checks<T>::value && !is_array_type<T>::value>::type>
-{
-    // librealsense types are sent to matlab using a pointer to the internal type.
-    // to get it back from matlab we first parse that pointer and then reconstruct the C++ wrapper
-    static T parse(const mxArray* cell)
-    {
-        using internal_t = typename type_traits<T>::rs2_internal_t;
-        return traits_trampoline::from_internal<T>(mx_wrapper_fns<internal_t*>::parse(cell));
-    }
-
-    static mxArray* wrap(T&& var)
-    {
-        using internal_t = typename type_traits<T>::rs2_internal_t;
-        return mx_wrapper_fns<internal_t*>::wrap(traits_trampoline::to_internal<T>(std::move(var)));
-    }
-    
-    static void destroy(const mxArray* cell)
-    {
-        using internal_t = typename type_traits<T>::rs2_internal_t;
-        // get pointer to the internal type we put on the heap
-        auto ptr = mx_wrapper_fns<internal_t*>::parse(cell);
-        delete ptr;
-        // signal to matlab that the wrapper owns one fewer objects
-        mexUnlock();
-    }
-};
 
 // simple helper overload to refer std::array and std::vector to wrap_array
 template<typename T> struct MatlabParamParser::mx_wrapper_fns<T, typename std::enable_if<is_array_type<T>::value>::type>

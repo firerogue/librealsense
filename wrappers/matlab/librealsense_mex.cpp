@@ -1526,7 +1526,8 @@ void mexFunction(int nOutParams, mxArray *outParams[], int nInParams, const mxAr
     }
     
     try {
-        f_data.func(nOutParams, outParams, nInParams - 2, inParams + 2); // "eat" the two function specifiers
+        bool success = f_data.func(nOutParams, outParams, nInParams - 2, inParams + 2); // "eat" the two function specifiers
+        if (!success) mexErrMsgTxt("An unknown error occured"); // TODO: use an enum to indicate error type.
     } catch (std::exception &e) {
         mexErrMsgTxt(e.what());
     } catch (...) {
