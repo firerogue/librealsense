@@ -17,4 +17,5 @@ target_sources(${LRS_DOTNET_TARGET}
         "${CMAKE_CURRENT_LIST_DIR}/SoftwareMotionFrame.cs"
         "${CMAKE_CURRENT_LIST_DIR}/Pose.cs"
         "${CMAKE_CURRENT_LIST_DIR}/InfoCollection.cs"
+        "${CMAKE_CURRENT_LIST_DIR}/SoftwareNotification.cs"
 )

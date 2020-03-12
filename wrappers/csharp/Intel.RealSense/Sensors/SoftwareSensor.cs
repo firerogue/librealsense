@@ -48,11 +48,11 @@ namespace Intel.RealSense
             });
         }
 
-        public void AddMotionFrame(SoftwareMotionFrame f)
-        {
-            object error;
-            NativeMethods.rs2_software_sensor_on_motion_frame(Handle, f, out error);
-        }
+        //public void AddMotionFrame(SoftwareMotionFrame f)
+        //{
+        //    object error;
+        //    NativeMethods.rs2_software_sensor_on_motion_frame(Handle, f, out error);
+        //}
 
         public void AddPoseFrame(SoftwarePoseFrame f)
         {
@@ -60,25 +60,43 @@ namespace Intel.RealSense
             NativeMethods.rs2_software_sensor_on_pose_frame(Handle, f, out error);
         }
 
-        public VideoStreamProfile AddVideoStream(SoftwareVideoStream profile)
+        public VideoStreamProfile AddVideoStream(SoftwareVideoStream profile, bool is_default=false)
         {
             object error;
-            var ptr = NativeMethods.rs2_software_sensor_add_video_stream(Handle, profile, out error);
+            var ptr = NativeMethods.rs2_software_sensor_add_video_stream_ex(Handle, profile, is_default, out error);
             return StreamProfile.Create<VideoStreamProfile>(ptr);
         }
 
-        public MotionStreamProfile AddMotionStream(SoftwareMotionStream profile)
+        public MotionStreamProfile AddMotionStream(SoftwareMotionStream profile, bool is_default=false)
         {
             object error;
-            var ptr = NativeMethods.rs2_software_sensor_add_motion_stream(Handle, profile, out error);
+            var ptr = NativeMethods.rs2_software_sensor_add_motion_stream_ex(Handle, profile, is_default, out error);
             return StreamProfile.Create<MotionStreamProfile>(ptr);
         }
 
-        public PoseStreamProfile AddPoseStream(SoftwarePoseStream profile)
+        public PoseStreamProfile AddPoseStream(SoftwarePoseStream profile, bool is_default = false)
         {
             object error;
-            var ptr = NativeMethods.rs2_software_sensor_add_pose_stream(Handle, profile, out error);
+            var ptr = NativeMethods.rs2_software_sensor_add_pose_stream_ex(Handle, profile, is_default, out error);
             return StreamProfile.Create<PoseStreamProfile>(ptr);
+        }
+
+        public void AddOption(Option opt, float min, float max, float step, float def)
+        {
+            object error;
+            NativeMethods.rs2_software_sensor_add_option(Handle, opt, min, max, step, def, out error);
+        }
+
+        public void AddRecommendedProcessingBlock(ProcessingBlock block)
+        {
+            object error;
+            NativeMethods.rs2_software_sensor_add_recommended_processing_block(Handle, block.Handle, out error);
+        }
+
+        public void AddNotification(SoftwareNotification notif)
+        {
+            object error;
+            NativeMethods.rs2_software_sensor_on_notification(Handle, notif, out error);
         }
 
         /// <summary>
