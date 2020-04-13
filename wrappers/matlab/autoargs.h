@@ -83,7 +83,7 @@ template <typename type> using make_caster = argcaster<intrinsic_t<type>>;
 template <class... Args>
 class argloader {
 private:
-    using indices = std::make_index_sequence<sizeof...(Args)>;
+    using indices = std::index_sequence_for<Args>;
     std::tuple<make_caster<Args>...> args;
     int min, max;
 public:
@@ -128,11 +128,11 @@ private:
 
 struct func_data {
     std::function<fnWrap> func;
-    std::vector<arg_t> args;
+    std::vector<arg_t> def_args;
     size_t out, in_min, in_max;
 
 public:
-    func_data() : func(), args(in_max), out(0), in_min(0), in_max(0) {};
+    func_data() : func(), def_args(in_max), out(0), in_min(0), in_max(0) {};
 
     // Hack until lambdas can be worked out to allow constructors
     func_data(size_t out_args, size_t min_in_args, size_t max_in_args, std::function<mxFunc> f) :
@@ -161,22 +161,41 @@ public:
     }
 
 private:
+    template<typename T>
+    bool wrap_val(int outc, mxArray* outv[], int idx, T& val) {
+        if (idx >= outc) return false;
+        outv[idx] = MatlabParamParser::wrap(val);
+        return true;
+    }
+
+    template<template<typename...> class TType, typename... Ts, size_t... Is>
+    void wrap_outs_impl(int outc, mxArray* outv[], TType<Ts...>& ret, std::index_sequence<Is...> /* dummy */) {
+        (wrap_val(outc, outv, Is, std::get<Is>(ret)) && ...);
+    }
+
+    template<template<typename...> class TType, typename... Ts>
+    void wrap_outs(int outc, xmArray* outv[], TType<Ts...>& ret) {
+        wrap_outs_impl(outc, outv, ret, std::index_sequence_for<Ts...>{});
+    }
     template <typename Func, typename Return, typename... Args>
     void init(Func&& f, Return(*)(Args...) /* dummy */) {
         using cast_in = argloader<Args...>;
 
-        func = [f](int outc, mxArray* outv[], int inc, const mxArray* inv[]) {
+        func = [f, out](int outc, mxArray* outv[], int inc, const mxArray* inv[]) {
             cast_in args_converter;
 
             // Try to parse args as C++ values
-            if (!args_converter.load_args(inc, inv, args))
+            if (!args_converter.load_args(inc, inv, def_args))
                 return false;
 
             auto ret = std::move(args_converter).template call<Return>(f);
 
-            if (outc == 0) return true;
-            if (outc == 1) outv[0] = MatlabParamParser::wrap(ret);
-            // outc > 1, expand returned tuple by hand
+            if (out == 0) // function declares no outputs
+                return true;
+            if (out == 1 && outc == 1) // function declares one output and user requests it
+                outv[0] = MatlabParamParser::wrap(ret);
+            if (out >= 2) // function declares multiple outputs
+                wrap_outs(outc, outv, ret);
             return true;
         };
     }

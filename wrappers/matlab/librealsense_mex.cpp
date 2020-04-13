@@ -1515,14 +1515,18 @@ void mexFunction(int nOutParams, mxArray *outParams[], int nInParams, const mxAr
         return;
     }
 
-    if (f_data.out != nOutParams) {
-        std::string errmsg = cname + "::" + fname.substr(0, fname.find("#", 0)) + ": Wrong number of outputs";
-        mexErrMsgTxt(errmsg.c_str());
+    if (f_data.out < nOutParams) {
+        std::stringstream ss;
+        ss << cname << "::" << fname.substr(0, fname.find("#", 0)) << ": Too many outputs requested (Got "
+           << nOutParams << ", expected <" << f_data.out << ")";
+        mexErrMsgTxt(ss.str().c_str());
     }
 
     if (f_data.in_min > nInParams - 2 || f_data.in_max < nInParams - 2) {
-        std::string errmsg = cname + "::" + fname.substr(0, fname.find("#", 0)) + ": Wrong number of inputs";
-        mexErrMsgTxt(errmsg.c_str());
+        std::stringstream ss;
+        ss << cname << "::" << fname.substr(0, fname.find("#", 0)) << ": Wrong number of inputs (Got "
+           << nInParams - 2 << ", expected " << f_data.in_min << "~" << f_data.in_max << ")";
+        mexErrMsgTxt(ss.str().c_str());
     }
     
     try {
