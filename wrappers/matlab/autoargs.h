@@ -28,24 +28,72 @@ protected:
     arg_t arg;
     bool has_value;
 
-    bool test_cell(const mxArray* cell, mxClassID id) { return mxGetClassID(cell) == id && IsScalar(cell); }
+    bool test_cell_strict(const mxArray* cell, mxClassID id) { return mxGetClassID(cell) == id && IsScalar(cell); }
 public:
     argcaster() : arg(T()), has_value(false) {}
 
     // trivial types are sent in "cleartext" instead of in arg_t wrapper
     typename std::enable_if<is_trivial_t<T>::value, bool>::type argcaster<T>::load(const mxArray* cell) {
         // Make sure the cell is the right type for this trivial type
-        if (!test_cell(cell, to_mx_class<T>::value)) return false;
+        if (!mxIsScalar(cell)) return false; // TODO: Arrays
+        auto cls = mxGetClassID(cell);
+        switch (cls) {
+        case mxUNKNOWN_CLASS:
+            mexErrMsgTxt("Error parsing type of argument");
+            return false; // mxClassID error
+        case mxCELL_CLASS: // TODO: for sure?
+        case mxSTRUCT_CLASS: // TODO: Further work to make sure its the correct struct
+        case mxFUNCTION_CLASS:
+            return false;
+
+        case mxCHAR_CLASS: // strings
+            // TODO: figure this out!
+
+        case mxLOGICAL_CLASS:
+            arg = arg_t(*static_cast<mxLogical*>(mxGetData(cell)));
+            break;
+        case mxDOUBLE_CLASS:
+            arg = arg_t(*static_cast<mxDouble*>(mxGetData(cell)));
+            break;
+        case mxSINGLE_CLASS:
+            arg = arg_t(*static_cast<mxSingle*>(mxGetData(cell)));
+            break;
+        case mxINT8_CLASS:
+            arg = arg_t(*static_cast<mxInt8*>(mxGetData(cell)));
+            break;
+        case mxUINT8_CLASS:
+            arg = arg_t(*static_cast<mxUint8*>(mxGetData(cell)));
+            break;
+        case mxINT16_CLASS:
+            arg = arg_t(*static_cast<mxInt16*>(mxGetData(cell)));
+            break;
+        case mxUINT16_CLASS:
+            arg = arg_t(*static_cast<mxUint16*>(mxGetData(cell)));
+            break;
+        case mxINT32_CLASS:
+            arg = arg_t(*static_cast<mxInt32*>(mxGetData(cell)));
+            break;
+        case mxUINT32_CLASS:
+            arg = arg_t(*static_cast<mxUint32*>(mxGetData(cell)));
+            break;
+        case mxINT64_CLASS:
+            arg = arg_t(*static_cast<mxInt64*>(mxGetData(cell)));
+            break;
+        case mxUINT64_CLASS:
+            arg = arg_t(*static_cast<mxUint64*>(mxGetData(cell)));
+            break;
+            
+        default: return false;
+        }
         
         // to_value_t<T> is used instead of T to handle enums
-        arg = arg_t(*static_cast<to_value_t<T>::type*>(mxGetData(cell)));
         has_value = true;
-        return true;
+        return arg.can_convert<T>();
     }
 
     typename std::enable_if<!is_trivial_t<T>::value, bool>::type load(const mxArray* cell) {
         // Make sure the cell is the right type to be a pointer
-        if (!test_cell(cell, mxUINT64_CLASS)) return false;
+        if (!test_cell_strict(cell, mxUINT64_CLASS)) return false;
 
         // pulls arg_t wrapper from matlab
         //arg = *reinterpret_cast<arg_t*>(*static_cast<uint64_t*>(mxGetData(cell)));
@@ -177,6 +225,7 @@ private:
     void wrap_outs(int outc, xmArray* outv[], TType<Ts...>& ret) {
         wrap_outs_impl(outc, outv, ret, std::index_sequence_for<Ts...>{});
     }
+
     template <typename Func, typename Return, typename... Args>
     void init(Func&& f, Return(*)(Args...) /* dummy */) {
         using cast_in = argloader<Args...>;

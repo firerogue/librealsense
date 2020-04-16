@@ -6,6 +6,7 @@
 #include <vector>
 #include <array>
 #include <type_traits>
+#include <typeindex>
 
 template <bool B> using bool_constant = std::integral_constant<bool, B>;
 
@@ -17,17 +18,34 @@ struct void_type {};
 // make this more complex to be able to handle inheritance?
 //      -> initializing class should add base classes to some sort of graph that indicates valid
 //         conversions.
-template <class T>
-bool can_convert(std::type_info& info) {
-    return info.hash_code() == typeid(T).hash_code();
+bool is_arithmetic(std::type_index idx) {
+    return (idx == std::type_index(typeid(bool)))
+        || (idx == std::type_index(typeid(int8_t)))
+        || (idx == std::type_index(typeid(uint8_t)))
+        || (idx == std::type_index(typeid(int16_t)))
+        || (idx == std::type_index(typeid(uint16_t)))
+        || (idx == std::type_index(typeid(int32_t)))
+        || (idx == std::type_index(typeid(uint32_t)))
+        || (idx == std::type_index(typeid(int64_t)))
+        || (idx == std::type_index(typeid(uint64_t)))
+        || (idx == std::type_index(typeid(float)))
+        || (idx == std::type_index(typeid(double)));
 }
 
-template <class T> using is_trivial_t = bool_constant<std::is_same<T, bool>::value
-    || std::is_same<T, int8_t>::value || std::is_same<T, uint8_t>::value
-    || std::is_same<T, int16_t>::value || std::is_same<T, uint16_t>::value
-    || std::is_same<T, int32_t>::value || std::is_same<T, uint32_t>::value
-    || std::is_same<T, int64_t>::value || std::is_same<T, uint64_t>::value
-    || std::is_enum<T>::value>;
+bool can_convert(std::type_index from, std::type_index to) {
+    if (from == to) return true;
+
+    // arithmetic types
+    if (is_arithmetic(from) && is_arithmetic(to)) return true;
+
+    // TODO: inheritance relations
+
+
+    // default to no
+    return false;
+}
+
+template <class T> using is_trivial_t = bool_constant<std::is_arithmetic<T>::value || std::is_enum<T>::value>;
 template <class T, typename voider = void> struct to_value_t : std::conditional<is_trivial_t<T>, T, void*> {};
 template <class T> struct to_value_t<T, std::enable_if<std::is_enum<T>::value>::type> : std::underlying_type<T> {};
 
@@ -40,12 +58,14 @@ template <> struct to_mx_class<uint16_t> : std::integral_constant<mxClassID, mxU
 template <> struct to_mx_class<int32_t> : std::integral_constant<mxClassID, mxINT32_CLASS> {};
 template <> struct to_mx_class<uint32_t> : std::integral_constant<mxClassID, mxUINT32_CLASS> {};
 template <> struct to_mx_class<int64_t> : std::integral_constant<mxClassID, mxINT64_CLASS> {};
+template <> struct to_mx_class<float> : std::integral_constant<mxClassID, mxSINGLE_CLASS> {};
+template <> struct to_mx_class<double> : std::integral_constant<mxClassID, mxDOUBLE_CLASS> {};
 template <class T> struct to_mx_class<T, std::enable_if<std::is_enum<T>::value>::type> : to_mx_class<std::underlying_type<T>> {};
-//template <> struct to_mx_class<uint64_t> : std::integral_constant<mxClassID, mxUINT64_CLASS> {};
+//template <> struct to_mx_class<uint64_t> : std::integral_constant<mxClassID, mxUINT64_CLASS> {}; // Same as default
 
 class arg_t {
 protected:
-    std::type_info* tinfo; // TODO: make sure you can arg_t = arg_t despite this.
+    std::type_index tidx;
     union value_t {
         value_t() : ptr(nullptr) {}
         bool b; value_t(bool b) : b(b) {}
@@ -57,6 +77,8 @@ protected:
         uint32_t ui32; value_t(uint32_t ui32) : ui32(ui32) {}
         int64_t i64; value_t(int64_t i64) : i64(i64) {}
         uint64_t ui64; value_t(uint64_t ui64) : ui64(ui64) {}
+        float f; value_t(float f) : f(f) {}
+        double d; value_t(double d) : d(d) {}
         void* ptr; value_t(void* ptr) : ptr(ptr) {}
     } holder;
     std::function<void(void*)> destroyer;
@@ -69,8 +91,8 @@ protected:
     typename std::enable_if<is_trivial_t<T>::value, to_value_t<T>::type>::type to_holder(T&& value) { return std::move(value); }
     template <class T>
     typename std::enable_if<!is_trivial_t<T>::value, void*>::type to_holder(T&& value) { return static_cast<void*>(trampoline_t::to_internal<T>(std::move(T))); }
-    template <class T>
-    typename std::enable_if<is_trivial_t<T>::value>::type destroy(void*) {}
+    
+    template <class T> typename std::enable_if<is_trivial_t<T>::value>::type destroy(void*) {}
     template <class T>
     typename std::enable_if<!is_trivial_t<T>::value>::type destroy(void* ptr) { 
         using internal_t = typename MatlabParamParser::type_traits<T>::rs2_internal_t;
@@ -82,11 +104,11 @@ protected:
     
     //arg_t(std::string& value) { static_assert(false, "Figure out strings!"); }
 public:
-    arg_t() : tinfo(const_cast<std::type_info*>(&typeid(nullptr_t))), holder(), destroyer([](void*) {}) {}
+    arg_t() : tidx(typeid(nullptr_t)), holder(), destroyer([](void*) {}) {}
     template <class T>
-    arg_t(T& value) : tinfo(const_cast<std::type_info*>(&typeid(T))), holder(to_holder(value)), destroyer(&destroy<T>) {}
+    arg_t(T& value) : tidx(typeid(T)), holder(to_holder(value)), destroyer(&destroy<T>) {}
     template <class T>
-    arg_t(T&& value) : tinfo(const_cast<std::type_info*>(&typeid(T))), holder(to_holder(std::move(value))), destroyer(&destroy<T>) {}
+    arg_t(T&& value) : tidx(typeid(T)), holder(to_holder(std::move(value))), destroyer(&destroy<T>) {}
 
     // TODO: Figure out strings
     //template <> static arg_t make_arg<std::string>(std::string& value) { return arg_t(value); }
@@ -95,47 +117,48 @@ public:
 
     template <class T>
     bool can_convert() {
-        return can_convert<T>(*tinfo);
+        return can_convert(tidx, std::type_index(typeid(T));
     }
 
-    template <typename T, typename voider = typename std::enable_if<is_trivial_t<T>::value>::type>
+    template <typename T>
     explicit operator T() {
-        if (!can_convert<T>(*tinfo)) {
+        if (!can_convert<T>()) {
             std::stringstream ss;
             ss << "Failed to get " << typeid(T).name() << "argument from arg at " << this
-                << ". Actual type is " << tinfo->name();
+                << ". Actual type is " << tidx.name();
             mexErrMsgTxt(ss.str().c_str());
         }
-        // casting pointer to union to a pointer of one of the internal types
-        // results in a pointer to that member. We can use this to generically
-        // grab the right type.
-        return *reinterpret_cast<to_value_t<T>*>(&holder); 
-    }
-    template <typename T, typename voider = typename std::enable_if<!is_trivial_t<T>::value>::type>
-    explicit operator T() {
-        using internal_t = typename MatlabParamParser::type_traits<T>::rs2_internal_t;
 
+        if (tidx == std::type_index(typeid(bool)))
+            return T(holder.b);
+        if (tidx == std::type_index(typeid(int8_t)))
+            return T(holder.i8);
+        if (tidx == std::type_index(typeid(uint8_t)))
+            return T(holder.ui8);
+        if (tidx == std::type_index(typeid(int16_t)))
+            return T(holder.i16);
+        if (tidx == std::type_index(typeid(uint16_t)))
+            return T(holder.ui16);
+        if (tidx == std::type_index(typeid(int32_t)))
+            return T(holder.i32);
+        if (tidx == std::type_index(typeid(uint32_t)))
+            return T(holder.ui32);
+        if (tidx == std::type_index(typeid(int64_t)))
+            return T(holder.i64);
+        if (tidx == std::type_index(typeid(uint64_t)))
+            return T(holder.ui64);
+        if (tidx == std::type_index(typeid(float)))
+            return T(holder.f);
+        if (tidx == std::type_index(typeid(double)))
+            return T(holder.d);
+        
+        // using holder.ptr
         if (!holder.ptr) throw std::runtime_error("Arg empty"); // TODO: More useful error message
-
-        if (!can_convert<T>(*tinfo)) {
-            std::stringstream ss;
-            ss << "Failed to get " << typeid(T).name() << "argument from arg at " << this
-                << ". Actual type is " << tinfo->name();
-            mexErrMsgTxt(ss.str().c_str());
-        }
-
         return trampoline_t::from_internal<T>(static_cast<internal_t*>(holder.ptr));
     }
 
-    template <class T>
     void destroy() {
-        if (!can_convert<T>(*tinfo)) {
-            std::stringstream ss;
-            ss << "Can't destroy arg of type " << typeid(T).name() << " at " << this
-                << ". Actual type is " << tinfo->name();
-            mexErrMsgTxt(ss.str().c_str());
-        }
-        deleter(holder);
+        destroyer(holder.ptr);
     }
 };
 
